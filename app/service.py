@@ -89,9 +89,10 @@ class AgentService:
             return {"status": "ok", "action": "log_improvement"}
 
         if self._is_help_request(payload.content or "", request_text):
+            self._safe_reply(payload, self._build_help_text())
             self.store.mark_processed(webhook_key)
-            logger.info("Webhook ignored: help_disabled message_id=%s elapsed=%.2fs", payload.effective_message_id, perf_counter() - started_at)
-            return {"status": "ignored", "reason": "help_disabled"}
+            logger.info("Help handled: message_id=%s elapsed=%.2fs", payload.effective_message_id, perf_counter() - started_at)
+            return {"status": "ok", "action": "help"}
 
         now_utc = payload.created_at.astimezone(UTC) if payload.created_at else datetime.now(UTC)
         now_local = now_utc.astimezone(self.timezone)
@@ -726,12 +727,18 @@ class AgentService:
         state_reminders.extend(created_reminders)
 
         rolling_summary = decision.updated_summary or (previous.rolling_summary if previous else "")
+        last_task_request_message_id = previous.last_task_request_message_id if previous else None
+        last_task_request_at = previous.last_task_request_at if previous else None
+
+        if created_reminders:
+            last_task_request_message_id = payload.effective_message_id
+            last_task_request_at = now_local.isoformat()
 
         return ConversationState(
             chat_id=payload.chat_id,
             date=date_key,
-            last_task_request_message_id=payload.effective_message_id,
-            last_task_request_at=now_local.isoformat(),
+            last_task_request_message_id=last_task_request_message_id,
+            last_task_request_at=last_task_request_at,
             rolling_summary=rolling_summary,
             created_reminders=state_reminders[-50:],
         )
