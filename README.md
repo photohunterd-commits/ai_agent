@@ -21,11 +21,12 @@ FastAPI webhook-агент для Пачки, который:
 
 ## Переменные окружения
 
-Скопируй `.env.example` в `.env` и заполни значения:
+Скопируй `.env.example` в `.env` локально или положи эти же значения в отдельный env-файл на сервере:
 
 ```env
 AITUNNEL_API_KEY=...
 AITUNNEL_MODEL=deepseek-chat
+AITUNNEL_BASE_URL=https://api.aitunnel.ru/v1
 PACHCA_ACCESS_TOKEN=...
 PACHCA_SIGNING_SECRET=...
 PACHCA_BOT_ALIASES=@ai,/ai
@@ -33,26 +34,23 @@ AGENT_TIMEZONE=Europe/Moscow
 MAX_CONTEXT_CHARS=8000
 MAX_MESSAGES_PER_SCAN=200
 PACHCA_DRY_RUN=false
-DATABASE_PATH=data/agent.db
+DATABASE_PATH=/var/lib/pachca-ai-agent/agent.db
 ```
 
-`.env` в репозиторий не коммитится: он уже добавлен в `.gitignore`. Для open-source репозитория основной путь такой:
-
-1. в GitHub пушится только код и `.env.example`;
-2. реальные значения добавляются в Railway через `Variables`;
-3. Railway сам прокидывает их приложению при запуске.
+`.env` и реальные ключи в git не коммитятся. В репозиторий уходит только код и `.env.example`.
 
 ### Что важно
 
 - `PACHCA_ACCESS_TOKEN` — токен бота или персональный токен со скоупами `messages:read`, `messages:create`, `tasks:create`.
 - `PACHCA_SIGNING_SECRET` — `Signing secret` из вкладки исходящего webhook у бота.
 - `PACHCA_BOT_ALIASES` — список триггеров через запятую. По умолчанию: `@ai,/ai`.
+- `DATABASE_PATH` — путь к SQLite базе на сервере. Лучше вынести её за пределы репозитория.
 
 ## Локальный запуск
 
 ```bash
 python -m venv .venv
-. .venv/Scripts/activate
+source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
@@ -63,22 +61,34 @@ uvicorn app.main:app --reload
 curl http://127.0.0.1:8000/
 ```
 
-## Railway
+## Деплой на свой сервер
 
-1. Создай новый сервис из этого репозитория.
-2. В `Variables` добавь реальные значения:
-   - `AITUNNEL_API_KEY`
-   - `AITUNNEL_MODEL`
-   - `PACHCA_ACCESS_TOKEN`
-   - `PACHCA_SIGNING_SECRET`
-   - `PACHCA_BOT_ALIASES`
-   - `AGENT_TIMEZONE`
-   - `MAX_CONTEXT_CHARS`
-   - `MAX_MESSAGES_PER_SCAN`
-   - `PACHCA_DRY_RUN`
-   - `DATABASE_PATH`
-3. Railway поднимет сервис по `Procfile`.
-4. Укажи в Пачке URL вида `https://<your-service>.up.railway.app/webhook`.
+1. Клонируй репозиторий на сервер, например в `/opt/pachca-ai-agent`.
+2. Создай виртуальное окружение и поставь зависимости:
+
+```bash
+cd /opt/pachca-ai-agent
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+3. Создай env-файл, например `/etc/pachca-ai-agent.env`, и заполни переменные из `.env.example`.
+4. Скопируй [deploy/pachca-ai-agent.service.example](deploy/pachca-ai-agent.service.example) в `/etc/systemd/system/pachca-ai-agent.service` и поправь `User`, `Group`, `WorkingDirectory`, `EnvironmentFile`.
+5. Запусти сервис:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable pachca-ai-agent
+sudo systemctl start pachca-ai-agent
+sudo systemctl status pachca-ai-agent
+```
+
+6. Выставь наружу HTTPS URL через Nginx или Caddy и укажи его в Пачке как webhook:
+
+```text
+https://bot.example.com/webhook
+```
 
 ## Пример webhook payload
 
