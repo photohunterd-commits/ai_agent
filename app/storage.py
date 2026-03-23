@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.models import ConversationState, TaskRecord
+from app.models import ConversationState, ReminderRecord
 
 
 class StateStore:
@@ -27,13 +27,16 @@ class StateStore:
                     date TEXT NOT NULL,
                     last_processed_message_id INTEGER,
                     last_processed_at TEXT,
+                    last_task_request_message_id INTEGER,
+                    last_task_request_at TEXT,
                     rolling_summary TEXT NOT NULL DEFAULT '',
-                    created_tasks_json TEXT NOT NULL DEFAULT '[]',
+                    created_reminders_json TEXT NOT NULL DEFAULT '[]',
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (chat_id, date)
                 )
                 """
             )
+            self._migrate_conversation_state_table(connection)
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS processed_webhooks (
@@ -43,12 +46,53 @@ class StateStore:
                 """
             )
 
+    def _migrate_conversation_state_table(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(conversation_state)").fetchall()
+        }
+        if "created_reminders_json" not in columns:
+            connection.execute(
+                "ALTER TABLE conversation_state ADD COLUMN created_reminders_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "last_task_request_message_id" not in columns:
+            connection.execute("ALTER TABLE conversation_state ADD COLUMN last_task_request_message_id INTEGER")
+        if "last_task_request_at" not in columns:
+            connection.execute("ALTER TABLE conversation_state ADD COLUMN last_task_request_at TEXT")
+        if "created_tasks_json" in columns:
+            connection.execute(
+                """
+                UPDATE conversation_state
+                SET created_reminders_json = created_tasks_json
+                WHERE (created_reminders_json IS NULL OR created_reminders_json = '[]')
+                  AND created_tasks_json IS NOT NULL
+                """
+            )
+        if "last_processed_message_id" in columns:
+            connection.execute(
+                """
+                UPDATE conversation_state
+                SET last_task_request_message_id = last_processed_message_id
+                WHERE last_task_request_message_id IS NULL
+                  AND last_processed_message_id IS NOT NULL
+                """
+            )
+        if "last_processed_at" in columns:
+            connection.execute(
+                """
+                UPDATE conversation_state
+                SET last_task_request_at = last_processed_at
+                WHERE last_task_request_at IS NULL
+                  AND last_processed_at IS NOT NULL
+                """
+            )
+
     def get_state(self, chat_id: int, date_key: str) -> ConversationState | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT chat_id, date, last_processed_message_id, last_processed_at,
-                       rolling_summary, created_tasks_json
+                SELECT chat_id, date, last_task_request_message_id, last_task_request_at,
+                       rolling_summary, created_reminders_json
                 FROM conversation_state
                 WHERE chat_id = ? AND date = ?
                 """,
@@ -58,39 +102,45 @@ class StateStore:
         if row is None:
             return None
 
-        created_tasks = [TaskRecord.model_validate(item) for item in json.loads(row["created_tasks_json"] or "[]")]
+        created_reminders = [
+            ReminderRecord.model_validate(item)
+            for item in json.loads(row["created_reminders_json"] or "[]")
+        ]
         return ConversationState(
             chat_id=row["chat_id"],
             date=row["date"],
-            last_processed_message_id=row["last_processed_message_id"],
-            last_processed_at=row["last_processed_at"],
+            last_task_request_message_id=row["last_task_request_message_id"],
+            last_task_request_at=row["last_task_request_at"],
             rolling_summary=row["rolling_summary"] or "",
-            created_tasks=created_tasks,
+            created_reminders=created_reminders,
         )
 
     def save_state(self, state: ConversationState) -> None:
-        payload = json.dumps([task.model_dump(mode="json") for task in state.created_tasks], ensure_ascii=False)
+        payload = json.dumps(
+            [reminder.model_dump(mode="json") for reminder in state.created_reminders],
+            ensure_ascii=False,
+        )
         updated_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO conversation_state (
-                    chat_id, date, last_processed_message_id, last_processed_at,
-                    rolling_summary, created_tasks_json, updated_at
+                    chat_id, date, last_task_request_message_id, last_task_request_at,
+                    rolling_summary, created_reminders_json, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(chat_id, date) DO UPDATE SET
-                    last_processed_message_id = excluded.last_processed_message_id,
-                    last_processed_at = excluded.last_processed_at,
+                    last_task_request_message_id = excluded.last_task_request_message_id,
+                    last_task_request_at = excluded.last_task_request_at,
                     rolling_summary = excluded.rolling_summary,
-                    created_tasks_json = excluded.created_tasks_json,
+                    created_reminders_json = excluded.created_reminders_json,
                     updated_at = excluded.updated_at
                 """,
                 (
                     state.chat_id,
                     state.date,
-                    state.last_processed_message_id,
-                    state.last_processed_at,
+                    state.last_task_request_message_id,
+                    state.last_task_request_at,
                     state.rolling_summary,
                     payload,
                     updated_at,
@@ -105,6 +155,17 @@ class StateStore:
             ).fetchone()
         return row is not None
 
+    def try_claim_webhook(self, webhook_key: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO processed_webhooks (webhook_key, processed_at)
+                VALUES (?, ?)
+                """,
+                (webhook_key, datetime.now(timezone.utc).isoformat()),
+            )
+            return cursor.rowcount > 0
+
     def mark_processed(self, webhook_key: str) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -114,4 +175,3 @@ class StateStore:
                 """,
                 (webhook_key, datetime.now(timezone.utc).isoformat()),
             )
-

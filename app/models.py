@@ -47,27 +47,46 @@ class ChatMessage(BaseModel):
     entity_id: int | None = None
 
 
-class TaskRecord(BaseModel):
+class ChatMember(BaseModel):
+    id: int
+    first_name: str
+    last_name: str | None = None
+    nickname: str | None = None
+    email: str | None = None
+    role: str | None = None
+    bot: bool = False
+
+    @property
+    def full_name(self) -> str:
+        return " ".join(part for part in (self.first_name, self.last_name or "") if part).strip()
+
+
+class ReminderRecord(BaseModel):
     title: str
-    task_id: int | None = None
+    reminder_id: int | None = None
     due_at: str | None = None
 
 
 class ConversationState(BaseModel):
     chat_id: int
     date: str
-    last_processed_message_id: int | None = None
-    last_processed_at: str | None = None
+    last_task_request_message_id: int | None = None
+    last_task_request_at: str | None = None
     rolling_summary: str = ""
-    created_tasks: list[TaskRecord] = Field(default_factory=list)
+    created_reminders: list[ReminderRecord] = Field(default_factory=list)
 
 
-class TaskDecision(BaseModel):
-    action: Literal["create_task", "ask_deadline", "noop"]
-    title: str | None = None
+class ReminderDraft(BaseModel):
+    title: str
     details: str | None = None
     due_at: str | None = None
     all_day: bool = False
     priority: int = 1
+    assignee_hint: str | None = None
+
+
+class AgentDecision(BaseModel):
+    action: Literal["create_reminders", "ask_followup", "reply", "noop"]
+    reminders: list[ReminderDraft] = Field(default_factory=list)
     updated_summary: str = ""
-    reply_message: str
+    reply_message: str = ""

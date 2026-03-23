@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import Settings
-from app.models import ChatMessage
+from app.models import ChatMember, ChatMessage
 
 
 class PachcaClient:
@@ -22,27 +22,43 @@ class PachcaClient:
         next_page = payload.get("meta", {}).get("paginate", {}).get("next_page")
         return messages, next_page
 
-    def create_task(
+    def list_chat_members(self, chat_id: int, *, cursor: str | None = None, limit: int = 50) -> tuple[list[ChatMember], str | None]:
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        payload = self._request("GET", f"/chats/{chat_id}/members", params=params)
+        members = [ChatMember.model_validate(item) for item in payload.get("data", [])]
+        next_page = payload.get("meta", {}).get("paginate", {}).get("next_page")
+        return members, next_page
+
+    def get_profile(self) -> dict[str, Any]:
+        return self._request("GET", "/profile")
+
+    def create_reminder(
         self,
         *,
         chat_id: int,
         content: str,
-        due_at: str,
+        due_at: str | None,
         all_day: bool,
         priority: int,
+        performer_ids: list[int] | None = None,
     ) -> dict[str, Any]:
-        body = {
-            "task": {
-                "kind": "reminder",
-                "content": content,
-                "due_at": due_at,
-                "priority": priority,
-                "chat_id": chat_id,
-                "all_day": all_day,
-            }
+        task: dict[str, Any] = {
+            "kind": "reminder",
+            "content": content,
+            "priority": priority,
+            "chat_id": chat_id,
+            "all_day": all_day,
         }
+        if due_at:
+            task["due_at"] = due_at
+        if performer_ids:
+            task["performer_ids"] = performer_ids
+
+        body = {"task": task}
         if self.settings.dry_run:
-            return {"data": {"id": 0, **body["task"]}}
+            return {"data": {"id": 0, **task}}
         return self._request("POST", "/tasks", json=body)
 
     def send_message(self, *, entity_type: str, entity_id: int, content: str) -> dict[str, Any]:

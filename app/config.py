@@ -34,12 +34,15 @@ class Settings:
     max_messages_per_scan: int
     dry_run: bool
     database_path: Path
+    improvements_log_path: Path
 
 
 def load_settings() -> Settings:
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     database_path = Path(os.getenv("DATABASE_PATH", str(data_dir / "agent.db")))
     database_path.parent.mkdir(parents=True, exist_ok=True)
+    improvements_log_path = Path(os.getenv("IMPROVEMENTS_LOG_PATH", str(database_path.parent / "agent_improvements.md")))
+    improvements_log_path.parent.mkdir(parents=True, exist_ok=True)
 
     return Settings(
         aitunnel_api_key=os.getenv("AITUNNEL_API_KEY"),
@@ -53,5 +56,5 @@ def load_settings() -> Settings:
         max_messages_per_scan=int(os.getenv("MAX_MESSAGES_PER_SCAN", "200")),
         dry_run=_as_bool(os.getenv("PACHCA_DRY_RUN")),
         database_path=database_path,
+        improvements_log_path=improvements_log_path,
     )
-
